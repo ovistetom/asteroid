@@ -2,6 +2,7 @@ from typing import Union
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torchaudio.functional import rtf_evd, rtf_power, mvdr_weights_rtf
 
 
 class SCM(nn.Module):
@@ -77,6 +78,11 @@ class RTFMVDRBeamformer(Beamformer):
         mix: torch.Tensor,
         target_scm: torch.Tensor,
         noise_scm: torch.Tensor,
+        solution: str='pow',
+        ref_mic=0,
+        diagonal_loading: bool = True,
+        diag_eps: float = 1e-7,
+        eps: float = 1e-8,       
     ):
         r"""Compute and apply MVDR beamformer from the speech and noise SCM matrices.
 
@@ -88,40 +94,20 @@ class RTFMVDRBeamformer(Beamformer):
             mix (torch.ComplexTensor): shape (batch, mics, freqs, frames)
             target_scm (torch.ComplexTensor): (batch, mics, mics, freqs)
             noise_scm (torch.ComplexTensor): (batch, mics, mics, freqs)
+            solution (str): solution strategy to estimate RTF ; 'rvd' or 'pow'.
+            ref_mic (int): reference microphone.            
 
         Returns:
             Filtered mixture. torch.ComplexTensor (batch, freqs, frames)
         """
-        # TODO: Implement several RTF estimation strategies, and choose one here, or expose all.
-        # Get relative transfer function (1st PCA of Σss)
-        e_val, e_vec = torch.linalg.eigh(target_scm.permute(0, 3, 1, 2))
-        rtf_vect = e_vec[..., -1]  # bfm
-        return self.from_rtf_vect(mix=mix, rtf_vec=rtf_vect.transpose(-1, -2), noise_scm=noise_scm)
-
-    def from_rtf_vect(
-        self,
-        mix: torch.Tensor,
-        rtf_vec: torch.Tensor,
-        noise_scm: torch.Tensor,
-    ):
-        """Compute and apply MVDR beamformer from the ATF vector and noise SCM matrix.
-
-        Args:
-            mix (torch.ComplexTensor): shape (batch, mics, freqs, frames)
-            rtf_vec (torch.ComplexTensor): (batch, mics, freqs)
-            noise_scm (torch.ComplexTensor): (batch, mics, mics, freqs)
-
-        Returns:
-            Filtered mixture. torch.ComplexTensor (batch, freqs, frames)
-        """
-        noise_scm_t = noise_scm.permute(0, 3, 1, 2)  # -> bfmm
-        rtf_vec_t = rtf_vec.transpose(-1, -2).unsqueeze(-1)  # -> bfm1
-
-        numerator = stable_solve(rtf_vec_t, noise_scm_t)  # -> bfm1
-
-        denominator = torch.matmul(rtf_vec_t.conj().transpose(-1, -2), numerator)  # -> bf11
-        bf_vect = (numerator / denominator).squeeze(-1).transpose(-1, -2)  # -> bfm1  -> bmf
-        output = self.apply_beamforming_vector(bf_vect, mix=mix)  # -> bft
+        target_scm = target_scm.permute(0, 3, 1, 2)  # -> bfmm
+        noise_scm = noise_scm.permute(0, 3, 1, 2)  # -> bfmm
+        if solution == 'evd':
+            rtf_vect = rtf_evd(psd_s=target_scm)
+        else:
+            rtf_vect = rtf_power(psd_s=target_scm, psd_n=noise_scm, reference_channel=ref_mic, diagonal_loading=diagonal_loading, diag_eps=diag_eps)
+        bf_vect = mvdr_weights_rtf(rtf=rtf_vect, psd_n=noise_scm, reference_channel=ref_mic, diagonal_loading=diagonal_loading, diag_eps=diag_eps, eps=eps)  # -> bfm
+        output = self.apply_beamforming_vector(bf_vect.transpose(-1, -2), mix=mix)  # -> bft
         return output
 
 
