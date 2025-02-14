@@ -2,8 +2,7 @@ from typing import Union
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torchaudio.functional import rtf_evd, rtf_power, mvdr_weights_rtf
-
+from torchaudio import functional as FA
 
 class SCM(nn.Module):
     def forward(self, x: torch.Tensor, mask: torch.Tensor = None, normalize: bool = True):
@@ -103,10 +102,10 @@ class RTFMVDRBeamformer(Beamformer):
         target_scm = target_scm.permute(0, 3, 1, 2)  # -> bfmm
         noise_scm = noise_scm.permute(0, 3, 1, 2)  # -> bfmm
         if solution == 'evd':
-            rtf_vect = rtf_evd(psd_s=target_scm)
+            rtf_vect = FA.rtf_evd(psd_s=target_scm)
         else:
-            rtf_vect = rtf_power(psd_s=target_scm, psd_n=noise_scm, reference_channel=ref_mic, diagonal_loading=diagonal_loading, diag_eps=diag_eps)
-        bf_vect = mvdr_weights_rtf(rtf=rtf_vect, psd_n=noise_scm, reference_channel=ref_mic, diagonal_loading=diagonal_loading, diag_eps=diag_eps, eps=eps)  # -> bfm
+            rtf_vect = FA.rtf_power(psd_s=target_scm, psd_n=noise_scm, reference_channel=ref_mic, diagonal_loading=diagonal_loading, diag_eps=diag_eps)
+        bf_vect = FA.mvdr_weights_rtf(rtf=rtf_vect, psd_n=noise_scm, reference_channel=ref_mic, diagonal_loading=diagonal_loading, diag_eps=diag_eps, eps=eps)  # -> bfm
         output = self.apply_beamforming_vector(bf_vect.transpose(-1, -2), mix=mix)  # -> bft
         return output
 
